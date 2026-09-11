@@ -304,6 +304,26 @@ LogicalResult optimizeClosureLikeOp(const ClosureOptimizationOptions &options,
   // be rebuilt.
   inlineClosureOperands(options, closureOp, entryBlock, rewriter);
 
+  // A result tied to an operand aliases it, so the operand must stay even when
+  // its block argument is unused. Eliding it would leave the tie pointing at a
+  // block argument that no longer exists.
+  llvm::SmallDenseSet<unsigned> tiedClosureOperands;
+  if (auto tiedOp =
+          dyn_cast<IREE::Util::TiedOpInterface>(closureOp.getOperation())) {
+    auto closureOperands = closureOp.getClosureOperands();
+    if (!closureOperands.empty()) {
+      unsigned baseIndex = closureOperands.getBeginOperandIndex();
+      for (unsigned i = 0, e = closureOp.getClosureResults().size(); i < e;
+           ++i) {
+        std::optional<unsigned> tiedIndex = tiedOp.getTiedResultOperandIndex(i);
+        if (tiedIndex.has_value() && *tiedIndex >= baseIndex &&
+            *tiedIndex - baseIndex < closureOperands.size()) {
+          tiedClosureOperands.insert(*tiedIndex - baseIndex);
+        }
+      }
+    }
+  }
+
   // Build data structure for unused operand elision.
   SmallVector<unsigned> elidedOperands;
   llvm::SmallMapVector<Value, BlockArgument, 8> argToBlockMap;
@@ -311,7 +331,8 @@ LogicalResult optimizeClosureLikeOp(const ClosureOptimizationOptions &options,
       entryBlock.getNumArguments());
   for (auto opArg : llvm::enumerate(closureOp.getClosureOperands())) {
     auto blockArg = entryBlock.getArgument(opArg.index());
-    if (blockArg.use_empty()) {
+    if (blockArg.use_empty() &&
+        !tiedClosureOperands.contains(opArg.index())) {
       // Not used - drop.
       elidedOperands.push_back(opArg.index());
       blockArgReplacements[opArg.index()] = BlockArgument();

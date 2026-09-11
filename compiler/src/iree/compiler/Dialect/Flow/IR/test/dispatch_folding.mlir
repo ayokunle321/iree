@@ -186,3 +186,21 @@ util.func @remove_redundant_results(%arg0 : tensor<?xf32>) -> (tensor<?xf32>, te
   // CHECK: util.return %[[DISPATCH]], %[[DISPATCH]]
   util.return %0#0, %0#2 : tensor<?xf32>, tensor<?xf32>
 }
+
+// -----
+
+// A result tied to an operand keeps that operand alive even when the
+// corresponding block argument is unused. Eliding it would leave the tie
+// referring to a block argument that no longer exists.
+
+// CHECK-LABEL: util.func public @keep_tied_operand_with_unused_block_arg
+// CHECK-SAME: (%[[ARG0:.+]]: tensor<4xi32>)
+util.func public @keep_tied_operand_with_unused_block_arg(%arg0: tensor<4xi32>) -> tensor<4xi32> {
+  // CHECK: %[[RET:.+]] = flow.dispatch.workgroups(%[[ARG0]]) : (tensor<4xi32>) -> %[[ARG0]] =
+  %0 = flow.dispatch.workgroups(%arg0) : (tensor<4xi32>) -> %arg0 =
+  (%c: !iree_tensor_ext.dispatch.tensor<readwrite:tensor<4xi32>>) {
+    flow.return
+  }
+  // CHECK: util.return %[[RET]]
+  util.return %0 : tensor<4xi32>
+}
